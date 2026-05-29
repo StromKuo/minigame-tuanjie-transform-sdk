@@ -24,15 +24,14 @@ jobs:
           fi
           git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || true
           git fetch upstream --prune
+          git fetch origin --tags
 
       - name: Sync version branches
-        id: sync
         run: |
           UPSTREAM_BRANCHES=$(git branch -r | grep -oP 'upstream/\Kv[\d.]+$' | sort -V)
           echo "Upstream version branches:"
           echo "$UPSTREAM_BRANCHES"
 
-          SYNCED_BRANCHES=""
           for BRANCH in $UPSTREAM_BRANCHES; do
             if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
               LOCAL=$(git rev-parse "origin/$BRANCH")
@@ -40,34 +39,23 @@ jobs:
               if [ "$LOCAL" != "$UPSTREAM" ]; then
                 echo "Updating branch: $BRANCH"
                 git push origin "upstream/$BRANCH:refs/heads/$BRANCH" --force
-                SYNCED_BRANCHES="$SYNCED_BRANCHES $BRANCH"
               else
                 echo "Branch $BRANCH is up to date, skipping"
               fi
             else
               echo "Creating branch: $BRANCH"
               git push origin "upstream/$BRANCH:refs/heads/$BRANCH"
-              SYNCED_BRANCHES="$SYNCED_BRANCHES $BRANCH"
             fi
           done
 
-          echo "synced_branches=$SYNCED_BRANCHES" >> "$GITHUB_OUTPUT"
-          if [ -n "$SYNCED_BRANCHES" ]; then
-            echo "has_updates=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_updates=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create tags for version branches
-        if: steps.sync.outputs.has_updates == 'true'
         run: |
-          git fetch origin --tags
+          UPSTREAM_BRANCHES=$(git branch -r | grep -oP 'upstream/\Kv[\d.]+$' | sort -V)
 
-          for BRANCH in ${{ steps.sync.outputs.synced_branches }}; do
+          for BRANCH in $UPSTREAM_BRANCHES; do
             VERSION="${BRANCH#v}"
             TAG="$BRANCH"
 
-            # 切换到分支，校验 package.json 版本
             git checkout "upstream/$BRANCH"
             PACKAGE_VERSION=$(jq -r '.version' package.json)
             if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
@@ -75,9 +63,7 @@ jobs:
               continue
             fi
 
-            # 检查 tag 是否已存在
             if git rev-parse "$TAG" >/dev/null 2>&1; then
-              # tag 已存在，检查是否指向同一 commit
               TAG_COMMIT=$(git rev-parse "$TAG")
               BRANCH_COMMIT=$(git rev-parse "upstream/$BRANCH")
               if [ "$TAG_COMMIT" = "$BRANCH_COMMIT" ]; then
