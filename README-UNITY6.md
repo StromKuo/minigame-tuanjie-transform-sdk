@@ -41,5 +41,7 @@ if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
 
 ## 已知边界
 
-- 本分支验证至「标准 WebGL 构建成功」；转换工具链（minigame-unity-webgl-transform）与微信开发者工具/真机请按常规流程使用，首包建议在开发者工具中完整跑一次。
-- 微信官方发布适配 Unity 6 的 `libemscriptenglx` / `wx_perf` 库后，可 rebase 回官方分支重新开启 GLX 加速。
+- 本分支验证至「产物加载与数据包解析」：编辑器编译、WebGL 构建、微信转换导出、产物 game.js 加载、数据包解析全部实测通过；**引擎启动（wasm 实例化/主循环/输入桥接）仍受阻**——SDK 转换层 ReplaceRules（闭源 dll）为 Emscripten 3.1 时代的 framework 结构编写，在 4.0 产物上大面积失配，需等待官方适配。
+- **版本选择建议（重要）**：若微信小游戏是首要目标，**Unity 6000.4（6.4）及以下版本原生兼容现有 SDK**（Emscripten 3.1.39，微信官方适配线），无需本分支任何补丁；Unity 6.5/6.6 请仅用于开发迭代，上线打包退回 6000.4 / 2022.3 LTS / 团结引擎。
+- **不要尝试降级工具链**（在 6.5/6.6 里替换旧 Emscripten 或旧 WebGLSupport 模块）：实测三层方案全部失败，且模块混搭会出现「构建报成功但静默不产出」的残缺状态。
+- 微信官方发布适配 Unity 6.5+ 的转换层后，可 rebase 回官方分支并删除本分支的运行时 stub。

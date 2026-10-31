@@ -1016,6 +1016,23 @@ namespace WeChatWASM
                     text = Regex.Replace(text, rule.old, rule.newStr);
                 }
             }
+#if UNITY_6000_0_OR_NEWER
+            // Unity 6 (Emscripten 4.0) framework 适配：
+            // 1. ConnectToProfiler / SendMessage 的定义已从 framework.js 移除（loader.js 中仅存代理，无实现），
+            //    小游戏产物不含 loader，Module["X"]=X 成为悬空引用，加载即 ReferenceError 并中断后续 Module
+            //    导出（含 FS 挂载），替换为空实现；SendMessage 引擎侧入口已删，小游戏请改用 WX SDK 桥接
+            text = text.Replace("Module[\"ConnectToProfiler\"]=ConnectToProfiler;",
+                "Module[\"ConnectToProfiler\"]=function(){};");
+            text = text.Replace("Module[\"SendMessage\"]=SendMessage;",
+                "Module[\"SendMessage\"]=function(){console.warn(\"[WX] SendMessage stub: not implemented in Unity 6 WebGL builds, use WX bridge instead\")};");
+            // 3. Emscripten 4.0 的 framework 顶层不再有全局 GL（WebGL 库改为运行时注入），
+            //    SDK 注入的 Module['GL'] = GL 成为悬空引用，改为安全求值
+            text = text.Replace("Module['GL'] = GL;", "Module['GL'] = (typeof GL !== 'undefined') ? GL : undefined;");
+            // 2. Emscripten 4.0 不再把 FS 对象挂到 Module，而微信侧插件按 Module.FS.createDataFile 访问，
+            //    补挂 FS 对象
+            text = text.Replace("Module[\"FS_createPath\"]=FS_createPath;",
+                "Module['FS']=FS;Module[\"FS_createPath\"]=FS_createPath;");
+#endif
             if (EnableRenderThread)
             {
                 UnityEngine.Debug.Log("[WX] EnableRenderThread=true, applying MainThreadRules");
@@ -1181,7 +1198,12 @@ namespace WeChatWASM
 #endif
             }
 
+#if UNITY_6000_0_OR_NEWER
+            // Emscripten 4.0（Unity 6）已移除 writeStackCookie / checkStackCookie，导出会报 undefined symbol 导致 emcc 失败
+            string original_EXPORTED_RUNTIME_METHODS = "\"ccall\",\"cwrap\",\"stackTrace\",\"addRunDependency\",\"removeRunDependency\",\"FS_createPath\",\"FS_createDataFile\",\"stackTrace\"";
+#else
             string original_EXPORTED_RUNTIME_METHODS = "\"ccall\",\"cwrap\",\"stackTrace\",\"addRunDependency\",\"removeRunDependency\",\"FS_createPath\",\"FS_createDataFile\",\"stackTrace\",\"writeStackCookie\",\"checkStackCookie\"";
+#endif
             // 添加额外的EXPORTED_RUNTIME_METHODS
             string additional_EXPORTED_RUNTIME_METHODS = ",\"lengthBytesUTF8\",\"stringToUTF8\"";
 
