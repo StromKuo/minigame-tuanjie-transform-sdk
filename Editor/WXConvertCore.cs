@@ -1040,6 +1040,10 @@ namespace WeChatWASM
             //    补一次 add 配平（运行时诊断确认：remove 时计数 0 -> -1）
             text = text.Replace("var addRunDependency=id=>{runDependencies++;Module[\"monitorRunDependencies\"]?.(runDependencies)};",
                 "var addRunDependency=id=>{runDependencies++;Module[\"monitorRunDependencies\"]?.(runDependencies)};addRunDependency(\"wasm-preloadAssets\");");
+            // 7. Unity 6 把 SystemInfo 探测移到了 loader.js（小游戏产物不含 loader），
+            //    UnityLoader.SystemInfo 缺失导致引擎图形能力查询失败（渲染设备不初始化），补最小 stub
+            text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
+                "if(!globalThis.UnityLoader){globalThis.UnityLoader={SystemInfo:{hasWebGL:true,hasWebGPU:false,browser:\"Chrome\",browserVersion:\"120\",gpu:\"ANGLE (WebGL)\",os:\"Android\",osVersion:\"14\",language:(globalThis.navigator&&navigator.language)||\"zh-CN\",mobile:true,notMobile:false,maxTouchPoints:5,touchSupported:true}};}if(!globalThis.webglContextAttributes){globalThis.webglContextAttributes={preserveDrawingBuffer:false,powerPreference:2}};var _scriptName=globalThis.document?.currentScript?.src;");
             // 6. Unity 6 音频初始化在异常分支调用 alert()，微信环境无此全局函数，补 stub
             text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
                 "globalThis.alert=globalThis.alert||function(m){console.log(\"[WX-alert-stub]\",m)};var _scriptName=globalThis.document?.currentScript?.src;");
