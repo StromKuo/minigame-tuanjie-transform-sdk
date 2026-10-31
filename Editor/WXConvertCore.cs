@@ -705,7 +705,10 @@ namespace WeChatWASM
 
         private static bool IsCompatibleWithUnity202203OrNewer()
         {
-#if UNITY_2022_3_OR_NEWER
+#if UNITY_6000_0_OR_NEWER
+            // Unity 6 内置 Emscripten 4.0，与 2022 预编译静态库（libemscriptenglx / wx_perf_2022，Emscripten 3.1 编译）存在 libc++ ABI 冲突，禁用
+            return false;
+#elif UNITY_2022_3_OR_NEWER
             return true;
 #else
             return false;

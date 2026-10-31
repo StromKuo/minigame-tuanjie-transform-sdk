@@ -129,13 +129,19 @@ namespace WeChatWASM
             */
             WXRuntimeExtEnvDef.RegisterAction("Unity.GetObjectInstanceID", (args) =>
             {
-#if UNITY_2021_3_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+                // Unity 6000.5+ 中 GetInstanceID() 与 EntityId→int 转换均为 error 级废弃，官方替代为 EntityId.ToULong
+                if (args is UnityEngine.Object unityObject)
+                {
+                    return unchecked((int)UnityEngine.EntityId.ToULong(unityObject.GetEntityId()));
+                }
+#elif UNITY_2021_3_OR_NEWER
                 if (args is UnityEngine.Object unityObject)
                 {
                     return unityObject.GetInstanceID();
                 }
 #endif
-                // unityObject.GetInstanceID() would never return 0. 
+                // unityObject.GetInstanceID() would never return 0.
                 return 0;
             });
         }
