@@ -41,7 +41,10 @@ if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
 
 ## 已知边界
 
-- 本分支验证至「产物加载与数据包解析」：编辑器编译、WebGL 构建、微信转换导出、产物 game.js 加载、数据包解析全部实测通过；**引擎启动（wasm 实例化/主循环/输入桥接）仍受阻**——SDK 转换层 ReplaceRules（闭源 dll）为 Emscripten 3.1 时代的 framework 结构编写，在 4.0 产物上大面积失配，需等待官方适配。
-- **版本选择建议（重要）**：若微信小游戏是首要目标，**Unity 6000.4（6.4）及以下版本原生兼容现有 SDK**（Emscripten 3.1.39，微信官方适配线），无需本分支任何补丁；Unity 6.5/6.6 请仅用于开发迭代，上线打包退回 6000.4 / 2022.3 LTS / 团结引擎。
-- **不要尝试降级工具链**（在 6.5/6.6 里替换旧 Emscripten 或旧 WebGLSupport 模块）：实测三层方案全部失败，且模块混搭会出现「构建报成功但静默不产出」的残缺状态。
-- 微信官方发布适配 Unity 6.5+ 的转换层后，可 rebase 回官方分支并删除本分支的运行时 stub。
+- **✅ 全链路已打通（2026-10-31 实测）**：引擎启动（callMain 130ms）、3D 渲染、IMGUI、触摸输入桥接、音频初始化在微信开发者工具中全部正常（60fps）。关键修复见提交历史：强制 WebGL2 + 跳过 3.1 时代 emscriptenArgs（GL 库裁剪真凶）、代码剥离双禁用（构建侧设置）、一组运行时转换 stub。
+- **使用注意**：
+  - 首次使用请重置工程的 Graphics API（Auto）与 emscriptenArgs（清空）——历史 SDK 版本写入的旧值会毒害构建；
+  - 构建侧需设置 `ManagedStrippingLevel=Disabled` + `stripEngineCode=false`（Unity 6.6 默认剥离会裁掉引擎启动必需代码）；
+  - 每次导出后向产物 `game.js` 顶部注入 crypto polyfill（见上文）。
+- 仍不可用：EmscriptenGLX 加速、性能分析插件（静态库 ABI 冲突）；TextureMin 压缩纹理适配待为 4.0 重写；真机验证待做。
+- 微信官方发布 Unity 6.5+ 适配后，可 rebase 回官方分支并删除本分支补丁。
