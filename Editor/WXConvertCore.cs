@@ -777,6 +777,11 @@ namespace WeChatWASM
             }
 #else
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.WebGL, false);
+#if UNITY_6000_0_OR_NEWER
+            // Unity 6 已移除 WebGL1：OpenGLES2（映射 WebGL1）会导致整个 GL JS 库在链接时被裁剪
+            // （framework 从 ~350KB 缩到 76KB，缺 1000+ 引擎函数，产物黑屏/引擎不启动）
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new GraphicsDeviceType[] { GraphicsDeviceType.OpenGLES3 });
+#else
             if (config.CompileOptions.Webgl2)
             {
                 PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new GraphicsDeviceType[] { GraphicsDeviceType.OpenGLES3 });
@@ -785,6 +790,7 @@ namespace WeChatWASM
             {
                 PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new GraphicsDeviceType[] { GraphicsDeviceType.OpenGLES2 });
             }
+#endif
 #endif
         }
 
@@ -1028,6 +1034,19 @@ namespace WeChatWASM
             // 3. Emscripten 4.0 的 framework 顶层不再有全局 GL（WebGL 库改为运行时注入），
             //    SDK 注入的 Module['GL'] = GL 成为悬空引用，改为安全求值
             text = text.Replace("Module['GL'] = GL;", "Module['GL'] = (typeof GL !== 'undefined') ? GL : undefined;");
+            // 4. 4.0 的 framework 用 async/await 组织启动，不再 addRunDependency("wasm-preloadAssets")，
+            //    而微信插件仍按 3.1 契约在资源就绪后 removeRunDependency("wasm-preloadAssets")，
+            //    多减一次导致 runDependencies 变 -1、monitorRunDependencies(0) 永不触发，插件死等。
+            //    补一次 add 配平（运行时诊断确认：remove 时计数 0 -> -1）
+            text = text.Replace("var addRunDependency=id=>{runDependencies++;Module[\"monitorRunDependencies\"]?.(runDependencies)};",
+                "var addRunDependency=id=>{runDependencies++;Module[\"monitorRunDependencies\"]?.(runDependencies)};addRunDependency(\"wasm-preloadAssets\");");
+            // 6. Unity 6 音频初始化在异常分支调用 alert()，微信环境无此全局函数，补 stub
+            text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
+                "globalThis.alert=globalThis.alert||function(m){console.log(\"[WX-alert-stub]\",m)};var _scriptName=globalThis.document?.currentScript?.src;");
+            // 5. Emscripten 4.0 的 assignWasmExports 只把 dynCall 系列挂到闭包内部变量，不挂 Module；
+            //    微信运行链依赖 Module.dynCall_* / Module.asm，缺失导致引擎入口无法点燃
+            text = text.Replace("dynCall_viiii=dynCalls[\"viiii\"]=wasmExports[\"dynCall_viiii\"];",
+                "dynCall_viiii=dynCalls[\"viiii\"]=wasmExports[\"dynCall_viiii\"];for(var __wxk in wasmExports){if(/^dynCall/.test(__wxk)){Module[__wxk]=wasmExports[__wxk];}}Module[\"asm\"]=wasmExports;");
             // 2. Emscripten 4.0 不再把 FS 对象挂到 Module，而微信侧插件按 Module.FS.createDataFile 访问，
             //    补挂 FS 对象
             text = text.Replace("Module[\"FS_createPath\"]=FS_createPath;",
@@ -1166,6 +1185,8 @@ namespace WeChatWASM
 
 #else
             PlayerSettings.WebGL.emscriptenArgs = string.Empty;
+#if !UNITY_6000_0_OR_NEWER
+            // Unity 6（Emscripten 4.0）下这些 3.1 时代参数会触发 GL JS 库被裁剪（framework 残缺、产物黑屏），跳过写入
             if (WXExtEnvDef.GETDEF("UNITY_2021_2_OR_NEWER"))
             {
                 PlayerSettings.WebGL.emscriptenArgs += " -s EXPORTED_FUNCTIONS=_sbrk,_emscripten_stack_get_base,_emscripten_stack_get_end";
@@ -1178,6 +1199,7 @@ namespace WeChatWASM
 #endif
                 PlayerSettings.WebGL.emscriptenArgs += " -s ERROR_ON_UNDEFINED_SYMBOLS=0";
             }
+#endif
 #endif
             PlayerSettings.runInBackground = false;
             if (config.ProjectConf.MemorySize != 0)
@@ -1194,7 +1216,9 @@ namespace WeChatWASM
 #if PLATFORM_WEIXINMINIGAME
                 PlayerSettings.WeixinMiniGame.emscriptenArgs += $" -s TOTAL_MEMORY={config.ProjectConf.MemorySize}MB";
 #else
+#if !UNITY_6000_0_OR_NEWER
                 PlayerSettings.WebGL.emscriptenArgs += $" -s TOTAL_MEMORY={config.ProjectConf.MemorySize}MB";
+#endif
 #endif
             }
 
@@ -1231,8 +1255,11 @@ namespace WeChatWASM
             UnityEngine.Debug.Log("[Builder] Starting to build WeixinMiniGame project ... ");
             UnityEngine.Debug.Log("PlayerSettings.WeixinMiniGame.emscriptenArgs : " + PlayerSettings.WeixinMiniGame.emscriptenArgs);
 #else
+#if !UNITY_6000_0_OR_NEWER
             PlayerSettings.WebGL.emscriptenArgs += " -s EXPORTED_RUNTIME_METHODS='[" + original_EXPORTED_RUNTIME_METHODS + additional_EXPORTED_RUNTIME_METHODS + "]'";
+#endif
 
+#if !UNITY_6000_0_OR_NEWER
             if (config.CompileOptions.ProfilingMemory)
             {
                 PlayerSettings.WebGL.emscriptenArgs += " --memoryprofiler ";
@@ -1242,6 +1269,7 @@ namespace WeChatWASM
             {
                 PlayerSettings.WebGL.emscriptenArgs += " --profiling-funcs ";
             }
+#endif
 
 #if UNITY_6000_0_OR_NEWER
             // 从小游戏转换工具里无法直接开启wasm2023特性 会导致转出的webgl异常，所以强制关闭
