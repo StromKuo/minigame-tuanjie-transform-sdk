@@ -1636,7 +1636,7 @@ namespace WeChatWASM
                 }
                 string adapter = File.ReadAllText(adapterPath, Encoding.UTF8);
                     string anchor = "const canvas = wx.createCanvas();";
-                    string lockCode = anchor + "if(!globalThis.__wxMainCanvasLocked){globalThis.__wxMainCanvasLocked=1;try{canvas.getContext('webgl2')}catch(e){}};";
+                    string lockCode = anchor + "if(globalThis.__wxMainCanvasLocked===undefined){try{globalThis.__wxMainCanvasLocked=!!canvas.getContext('webgl2')}catch(e){globalThis.__wxMainCanvasLocked=false}};";
                     if (!adapter.Contains(anchor))
                     {
                         throw new Exception("[Unity6] weapp-adapter.js anchor 'const canvas = wx.createCanvas();' not found - template changed?");
@@ -1649,12 +1649,41 @@ namespace WeChatWASM
                         UnityEngine.Debug.Log("[Unity6] weapp-adapter: main canvas pre-locked to webgl2");
                     }
 
+                // a2) [N04/R11] framework 补丁后验断言：关键锚点必须恰好命中，否则导出失败
+                string frameworkPath = Path.Combine(dst, "webgl.wasm.framework.unityweb.js");
+                if (!File.Exists(frameworkPath))
+                {
+                    throw new Exception("[Unity6] webgl.wasm.framework.unityweb.js not found - framework patches not verifiable");
+                }
+                string fw = File.ReadAllText(frameworkPath, Encoding.UTF8);
+                var requiredMarkers = new System.Collections.Generic.KeyValuePair<string, string>[]
+                {
+                    // (补丁产物标记, 说明)
+                    new System.Collections.Generic.KeyValuePair<string, string>("addRunDependency(\"wasm-preloadAssets\");", "依赖配平"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("hasWebGL:2", "SystemInfo 版本语义"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("[WX-alert-stub]", "alert stub"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("Module[\"asm\"]=wasmExports;", "dynCall/asm 导出"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("Module['FS']=FS;", "FS 挂载"),
+                };
+                foreach (var kv in requiredMarkers)
+                {
+                    int count = CountOccurrences(fw, kv.Key);
+                    if (count != 1)
+                    {
+                        throw new Exception($"[Unity6] framework patch marker '{kv.Value}' ({kv.Key.Substring(0, System.Math.Min(30, kv.Key.Length))}...) expected exactly 1, got {count} - build output form changed?");
+                    }
+                }
+                UnityEngine.Debug.Log("[Unity6] framework patch markers verified (5/5)");
+
                 // b0) game.js：注入 crypto.getRandomValues polyfill。
                 // Unity 6 (Emscripten 4.0) 的链接管线不会把 SDK 的 crypto.jspre 拼入产物，
                 // 而微信 iOS(JSC) 等环境缺该 API（官方 issue #30），引擎启动即 abort。
                 // 仅补缺不覆盖既有 crypto 对象的其他能力（复审 R20）。
                 string gameJsPath0 = Path.Combine(dst, "game.js");
-                if (File.Exists(gameJsPath0))
+                if (!File.Exists(gameJsPath0))
+                {
+                    throw new Exception("[Unity6] game.js not found after export - crypto/modal patches cannot be applied");
+                }
                 {
                     string g0 = File.ReadAllText(gameJsPath0, Encoding.UTF8);
                     if (!g0.Contains("wx-crypto-polyfill"))
@@ -1668,12 +1697,15 @@ namespace WeChatWASM
 
                 // b) game.js：拦截插件对未知版本的"不支持webgl"误导弹窗（引擎实际渲染正常）
                 string gameJsPath = Path.Combine(dst, "game.js");
-                if (File.Exists(gameJsPath))
+                if (!File.Exists(gameJsPath))
+                {
+                    throw new Exception("[Unity6] game.js not found - modal patch cannot be applied");
+                }
                 {
                     string gameJs = File.ReadAllText(gameJsPath, Encoding.UTF8);
                     if (!gameJs.Contains("block-webgl-modal"))
                     {
-                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var t=(''+((o&&o.title)||''));var s=((''+((o&&o.content)||''))+t).toLowerCase();var isMisreport=t==='\\u63d0\\u793a'&&s.indexOf('webgl')>=0&&s.indexOf('\\u4e0d\\u652f\\u6301')>=0;var gl2ok=false;try{gl2ok=!!(globalThis.canvas&&globalThis.canvas.getContext&&globalThis.canvas.getContext('webgl2'))||!!(globalThis.__wxMainCanvasLocked)}catch(e){}if(isMisreport&&gl2ok){var r={confirm:true,cancel:false};var p=Promise.resolve(r);try{if(o&&typeof o.success==='function'){o.success(r)}}catch(e){}try{if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return p}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
+                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var t=(''+((o&&o.title)||''));var s=((''+((o&&o.content)||''))+t).toLowerCase();var isMisreport=t==='\\u63d0\\u793a'&&s.indexOf('webgl')>=0&&s.indexOf('\\u4e0d\\u652f\\u6301')>=0;if(isMisreport){var gl2ok=false;try{gl2ok=globalThis.__wxMainCanvasLocked===true||(!!globalThis.canvas&&!!globalThis.canvas.getContext&&!!globalThis.canvas.getContext('webgl2'))}catch(e){}if(gl2ok){var r={confirm:true,cancel:false};var p=Promise.resolve(r);try{if(o&&typeof o.success==='function'){o.success(r)}}catch(e){}try{if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return p}}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
                         gameJs = block + gameJs;
                         File.WriteAllText(gameJsPath, gameJs, Encoding.UTF8);
                         UnityEngine.Debug.Log("[Unity6] game.js: webgl misdiagnosis modal blocked");
@@ -1687,6 +1719,18 @@ namespace WeChatWASM
                 throw;
             }
 #endif
+        }
+
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            int count = 0, idx = 0;
+            while ((idx = haystack.IndexOf(needle, idx, System.StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                idx += needle.Length;
+            }
+            return count;
         }
 
         private static void checkNeedRmovePackageParallelPreload()
