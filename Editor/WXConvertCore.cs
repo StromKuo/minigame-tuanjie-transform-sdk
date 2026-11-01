@@ -298,7 +298,6 @@ namespace WeChatWASM
                 }
 
                 ConvertCode();
-                ProcessUnity6DirectConnect(); // Unity 6: 主 canvas 抢锁 webgl2 直连方案
                 if (!UseIL2CPP)
                 {
                     ConvertDotnetCode();
@@ -327,11 +326,13 @@ namespace WeChatWASM
                         }
 
                         finishExport();
+                        ProcessUnity6DirectConnect(); // Unity 6: 主 canvas 抢锁 webgl2（须在模板生成后执行）
                     });
                 }
                 else
                 {
                     finishExport();
+                    ProcessUnity6DirectConnect(); // Unity 6: 主 canvas 抢锁 webgl2（须在模板生成后执行）
                 }
             }
             return WXExportError.SUCCEED;
@@ -782,6 +783,9 @@ namespace WeChatWASM
             // Unity 6 已移除 WebGL1：OpenGLES2（映射 WebGL1）会导致整个 GL JS 库在链接时被裁剪
             // （framework 从 ~350KB 缩到 76KB，缺 1000+ 引擎函数，产物黑屏/引擎不启动）
             PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new GraphicsDeviceType[] { GraphicsDeviceType.OpenGLES3 });
+            // [复审 R05] 同步强制 Webgl2 开关：该开关驱动 contextType、TextureMin jslib 选择与版本检查，
+            // 与 Graphics API 分裂会造成插件请求 WebGL1 而引擎要 WebGL2 的冲突
+            config.CompileOptions.Webgl2 = true;
 #else
             if (config.CompileOptions.Webgl2)
             {
@@ -1024,36 +1028,33 @@ namespace WeChatWASM
                 }
             }
 #if UNITY_6000_0_OR_NEWER
-            // Unity 6 (Emscripten 4.0) framework 适配：
-            // 1. ConnectToProfiler / SendMessage 的定义已从 framework.js 移除（loader.js 中仅存代理，无实现），
-            //    小游戏产物不含 loader，Module["X"]=X 成为悬空引用，加载即 ReferenceError 并中断后续 Module
-            //    导出（含 FS 挂载），替换为空实现；SendMessage 引擎侧入口已删，小游戏请改用 WX SDK 桥接
-            text = text.Replace("Module[\"ConnectToProfiler\"]=ConnectToProfiler;",
-                "Module[\"ConnectToProfiler\"]=function(){};");
-            text = text.Replace("Module[\"SendMessage\"]=SendMessage;",
-                "Module[\"SendMessage\"]=function(){console.warn(\"[WX] SendMessage stub: not implemented in Unity 6 WebGL builds, use WX bridge instead\")};");
-            // 3. Emscripten 4.0 的 framework 顶层不再有全局 GL（WebGL 库改为运行时注入），
+            // Unity 6 (Emscripten 4.0) framework 适配（复审勘误后修订）：
+            // [复审 R08 勘误] 原始 framework 实际保留了 function SendMessage / ConnectToProfiler 定义
+            //（早期 GL 库残缺产物上的"悬空引用"是伴生症状），不再覆盖有效入口，撤除 stub。
+            // [复审 R16 勘误] StackCookie 在 4.0.20 仍存在（受 STACK_OVERFLOW_CHECK 控制），
+            // 但"从导出清单移除以匹配实测产物"仍保留——见 EXPORTED_RUNTIME_METHODS 处理。
+            // 1. Emscripten 4.0 的 framework 顶层不再有全局 GL（WebGL 库改为运行时注入），
             //    SDK 注入的 Module['GL'] = GL 成为悬空引用，改为安全求值
             text = text.Replace("Module['GL'] = GL;", "Module['GL'] = (typeof GL !== 'undefined') ? GL : undefined;");
-            // 4. 4.0 的 framework 用 async/await 组织启动，不再 addRunDependency("wasm-preloadAssets")，
+            // 2. 4.0 的 framework 用 async/await 组织启动，不再 addRunDependency("wasm-preloadAssets")，
             //    而微信插件仍按 3.1 契约在资源就绪后 removeRunDependency("wasm-preloadAssets")，
             //    多减一次导致 runDependencies 变 -1、monitorRunDependencies(0) 永不触发，插件死等。
             //    补一次 add 配平（运行时诊断确认：remove 时计数 0 -> -1）
             text = text.Replace("var addRunDependency=id=>{runDependencies++;Module[\"monitorRunDependencies\"]?.(runDependencies)};",
                 "var addRunDependency=id=>{runDependencies++;Module[\"monitorRunDependencies\"]?.(runDependencies)};addRunDependency(\"wasm-preloadAssets\");");
-=globalThis.alert||function(m){console.log(\"[WX-alert-stub]\",m)};");
-            // 7. Unity 6 把 SystemInfo 探测移到了 loader.js（小游戏产物不含 loader），
-            //    UnityLoader.SystemInfo 缺失导致引擎图形能力查询失败（渲染设备不初始化），补最小 stub
+            // 3. Unity 6 把 SystemInfo 探测移到了 loader.js（小游戏产物不含 loader）。
+            //    UnityLoader.SystemInfo 缺失导致引擎图形能力查询失败（hasWebGL 必须为版本号 2=WebGL2，
+            //    布尔/1 会使引擎选择 NULL 图形设备）。能取到真实设备信息时用真实值，否则保守回退。
             text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
-                "if(!globalThis.UnityLoader){globalThis.UnityLoader={SystemInfo:{width:1170,height:2532,userAgent:\"Mozilla/5.0 MicroMessenger\",hasWebGL:2,hasWebGPU:0,hasWasm:1,hasWasm2023:0,hasWasmThreads:false,hasMemory64:0,missingWasm2023Feature:null,hasThreads:false,hasCursorLock:true,hasFullscreen:false,browser:\"Chrome\",browserVersion:\"120\",gpu:\"ANGLE (WebGL)\",os:\"Android\",osVersion:\"14\",language:(globalThis.navigator&&navigator.language)||\"zh-CN\",mobile:true,maxTouchPoints:5}};}if(!globalThis.webglContextAttributes){globalThis.webglContextAttributes={preserveDrawingBuffer:false,powerPreference:2}};var _scriptName=globalThis.document?.currentScript?.src;");
-            // 6. Unity 6 音频初始化在异常分支调用 alert()，微信环境无此全局函数，补 stub
+                "if(!globalThis.UnityLoader||!globalThis.UnityLoader.SystemInfo){(function(){var si=null;try{si=wx.getSystemInfoSync()}catch(e){}var w=si?si.screenWidth:390,h=si?si.screenHeight:844;globalThis.UnityLoader={SystemInfo:{width:w,height:h,userAgent:\"Mozilla/5.0 MicroMessenger\",hasWebGL:2,hasWebGPU:0,hasWasm:1,hasWasm2023:0,hasWasmThreads:false,hasMemory64:0,missingWasm2023Feature:null,hasThreads:false,hasCursorLock:true,hasFullscreen:false,browser:\"Chrome\",browserVersion:si?si.version:\"120\",gpu:\"ANGLE (WebGL)\",os:si?si.platform:\"devtools\",osVersion:si?si.system:\"\",language:(si&&si.language)||\"zh_CN\",mobile:si?si.platform!==\"devtools\":true,maxTouchPoints:5}}})()};if(!globalThis.webglContextAttributes){globalThis.webglContextAttributes={preserveDrawingBuffer:false,powerPreference:2}};var _scriptName=globalThis.document?.currentScript?.src;");
+            // 4. Unity 6 音频初始化在异常分支调用 alert()，微信环境无此全局函数，补 stub（仅补缺，不覆盖）
             text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
                 "globalThis.alert=globalThis.alert||function(m){console.log(\"[WX-alert-stub]\",m)};var _scriptName=globalThis.document?.currentScript?.src;");
             // 5. Emscripten 4.0 的 assignWasmExports 只把 dynCall 系列挂到闭包内部变量，不挂 Module；
             //    微信运行链依赖 Module.dynCall_* / Module.asm，缺失导致引擎入口无法点燃
             text = text.Replace("dynCall_viiii=dynCalls[\"viiii\"]=wasmExports[\"dynCall_viiii\"];",
                 "dynCall_viiii=dynCalls[\"viiii\"]=wasmExports[\"dynCall_viiii\"];for(var __wxk in wasmExports){if(/^dynCall/.test(__wxk)){Module[__wxk]=wasmExports[__wxk];}}Module[\"asm\"]=wasmExports;");
-            // 2. Emscripten 4.0 不再把 FS 对象挂到 Module，而微信侧插件按 Module.FS.createDataFile 访问，
+            // 6. Emscripten 4.0 不再把 FS 对象挂到 Module，而微信侧插件按 Module.FS.createDataFile 访问，
             //    补挂 FS 对象
             text = text.Replace("Module[\"FS_createPath\"]=FS_createPath;",
                 "Module['FS']=FS;Module[\"FS_createPath\"]=FS_createPath;");
@@ -1624,16 +1625,39 @@ namespace WeChatWASM
 
                 // a) weapp-adapter.js：主 canvas 诞生即锁 webgl2
                 string adapterPath = Path.Combine(dst, "weapp-adapter.js");
-                if (File.Exists(adapterPath))
+                if (!File.Exists(adapterPath))
                 {
-                    string adapter = File.ReadAllText(adapterPath, Encoding.UTF8);
+                    throw new Exception("[Unity6] weapp-adapter.js not found after export - direct-connect patch cannot be applied");
+                }
+                string adapter = File.ReadAllText(adapterPath, Encoding.UTF8);
                     string anchor = "const canvas = wx.createCanvas();";
-                    string lockCode = anchor + "try{canvas.getContext('webgl2')}catch(e){};";
-                    if (adapter.Contains(anchor) && !adapter.Contains("try{canvas.getContext('webgl2')}catch(e){};"))
+                    string lockCode = anchor + "if(!globalThis.__wxMainCanvasLocked){globalThis.__wxMainCanvasLocked=1;try{canvas.getContext('webgl2')}catch(e){}};";
+                    if (!adapter.Contains(anchor))
                     {
-                        adapter = adapter.Replace(anchor, lockCode, 1);
+                        throw new Exception("[Unity6] weapp-adapter.js anchor 'const canvas = wx.createCanvas();' not found - template changed?");
+                    }
+                    if (!adapter.Contains("__wxMainCanvasLocked"))
+                    {
+                        int idx = adapter.IndexOf(anchor, System.StringComparison.Ordinal);
+                        adapter = adapter.Substring(0, idx) + lockCode + adapter.Substring(idx + anchor.Length);
                         File.WriteAllText(adapterPath, adapter, Encoding.UTF8);
                         UnityEngine.Debug.Log("[Unity6] weapp-adapter: main canvas pre-locked to webgl2");
+                    }
+
+                // b0) game.js：注入 crypto.getRandomValues polyfill。
+                // Unity 6 (Emscripten 4.0) 的链接管线不会把 SDK 的 crypto.jspre 拼入产物，
+                // 而微信 iOS(JSC) 等环境缺该 API（官方 issue #30），引擎启动即 abort。
+                // 仅补缺不覆盖既有 crypto 对象的其他能力（复审 R20）。
+                string gameJsPath0 = Path.Combine(dst, "game.js");
+                if (File.Exists(gameJsPath0))
+                {
+                    string g0 = File.ReadAllText(gameJsPath0, Encoding.UTF8);
+                    if (!g0.Contains("wx-crypto-polyfill"))
+                    {
+                        string polyfill = "if(typeof crypto==='undefined'||!crypto.getRandomValues){var __g=typeof window!=='undefined'?window:(typeof GameGlobal!=='undefined'?GameGlobal:globalThis);__g.crypto={getRandomValues:function(a){for(var i=0;i<a.length;i++){a[i]=(Math.random()*256)|0}return a}}};/*wx-crypto-polyfill*/";
+                        g0 = polyfill + g0;
+                        File.WriteAllText(gameJsPath0, g0, Encoding.UTF8);
+                        UnityEngine.Debug.Log("[Unity6] game.js: crypto.getRandomValues polyfill injected");
                     }
                 }
 
@@ -1644,7 +1668,7 @@ namespace WeChatWASM
                     string gameJs = File.ReadAllText(gameJsPath, Encoding.UTF8);
                     if (!gameJs.Contains("block-webgl-modal"))
                     {
-                        string block = "(function(){try{var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var s=(''+((o&&o.content)||''))+(''+((o&&o.title)||''));if(s.indexOf('webgl')>=0||s.indexOf('WebGL')>=0){return Promise.resolve({confirm:true,cancel:false})}return osm(o)}}}catch(e){}})();";
+                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var s=((''+((o&&o.content)||''))+(''+((o&&o.title)||''))).toLowerCase();if(s.indexOf('webgl')>=0){var r={confirm:true,cancel:false};try{if(o&&typeof o.success==='function'){o.success(r)}if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return Promise.resolve(r)}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
                         gameJs = block + gameJs;
                         File.WriteAllText(gameJsPath, gameJs, Encoding.UTF8);
                         UnityEngine.Debug.Log("[Unity6] game.js: webgl misdiagnosis modal blocked");
