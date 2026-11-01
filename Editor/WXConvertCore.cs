@@ -204,6 +204,10 @@ namespace WeChatWASM
             // emscriptenglx的相关特性
             ProcessWxEmscriptenGLXBinaries();
             MakeEnvForLuaAdaptor();
+#if UNITY_6000_0_OR_NEWER
+            // [N01] Unity 6 下 WebGL2 是硬性要求，先归一化开关再选纹理库，避免首次(false)导出错选 WebGL1 jslib
+            config.CompileOptions.Webgl2 = true;
+#endif
             // JSLib
             SettingWXTextureMinJSLib();
             UpdateGraphicAPI();
@@ -326,13 +330,11 @@ namespace WeChatWASM
                         }
 
                         finishExport();
-                        ProcessUnity6DirectConnect(); // Unity 6: 主 canvas 抢锁 webgl2（须在模板生成后执行）
                     });
                 }
                 else
                 {
                     finishExport();
-                    ProcessUnity6DirectConnect(); // Unity 6: 主 canvas 抢锁 webgl2（须在模板生成后执行）
                 }
             }
             return WXExportError.SUCCEED;
@@ -1046,7 +1048,7 @@ namespace WeChatWASM
             //    UnityLoader.SystemInfo 缺失导致引擎图形能力查询失败（hasWebGL 必须为版本号 2=WebGL2，
             //    布尔/1 会使引擎选择 NULL 图形设备）。能取到真实设备信息时用真实值，否则保守回退。
             text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
-                "if(!globalThis.UnityLoader||!globalThis.UnityLoader.SystemInfo){(function(){var si=null;try{si=wx.getSystemInfoSync()}catch(e){}var w=si?si.screenWidth:390,h=si?si.screenHeight:844;globalThis.UnityLoader={SystemInfo:{width:w,height:h,userAgent:\"Mozilla/5.0 MicroMessenger\",hasWebGL:2,hasWebGPU:0,hasWasm:1,hasWasm2023:0,hasWasmThreads:false,hasMemory64:0,missingWasm2023Feature:null,hasThreads:false,hasCursorLock:true,hasFullscreen:false,browser:\"Chrome\",browserVersion:si?si.version:\"120\",gpu:\"ANGLE (WebGL)\",os:si?si.platform:\"devtools\",osVersion:si?si.system:\"\",language:(si&&si.language)||\"zh_CN\",mobile:si?si.platform!==\"devtools\":true,maxTouchPoints:5}}})()};if(!globalThis.webglContextAttributes){globalThis.webglContextAttributes={preserveDrawingBuffer:false,powerPreference:2}};var _scriptName=globalThis.document?.currentScript?.src;");
+                "if(!globalThis.UnityLoader){globalThis.UnityLoader={}};if(!globalThis.UnityLoader.SystemInfo){(function(){var si=null;try{si=wx.getSystemInfoSync()}catch(e){}var w=si?si.screenWidth:390,h=si?si.screenHeight:844;globalThis.UnityLoader.SystemInfo={width:w,height:h,userAgent:\"Mozilla/5.0 MicroMessenger\",hasWebGL:2,hasWebGPU:0,hasWasm:1,hasWasm2023:0,hasWasmThreads:false,hasMemory64:0,missingWasm2023Feature:null,hasThreads:false,hasCursorLock:true,hasFullscreen:false,browser:\"Chrome\",browserVersion:si?si.version:\"120\",gpu:\"ANGLE (WebGL)\",os:si?si.platform:\"devtools\",osVersion:si?si.system:\"\",language:(si&&si.language)||\"zh_CN\",mobile:si?si.platform!==\"devtools\":true,maxTouchPoints:5}})()};if(!globalThis.webglContextAttributes){globalThis.webglContextAttributes={preserveDrawingBuffer:false,powerPreference:2}};var _scriptName=globalThis.document?.currentScript?.src;");
             // 4. Unity 6 音频初始化在异常分支调用 alert()，微信环境无此全局函数，补 stub（仅补缺，不覆盖）
             text = text.Replace("var _scriptName=globalThis.document?.currentScript?.src;",
                 "globalThis.alert=globalThis.alert||function(m){console.log(\"[WX-alert-stub]\",m)};var _scriptName=globalThis.document?.currentScript?.src;");
@@ -1477,6 +1479,9 @@ namespace WeChatWASM
                 convertDataPackage(false);
                 UnityEngine.Debug.LogFormat("[Converter] All done!");
                 //ShowNotification(new GUIContent("转换完成"));
+                #if UNITY_6000_0_OR_NEWER
+                ProcessUnity6DirectConnect(); // [N03] 最终补丁必须在 exportDone 之前完成，监听者才能拿到补丁后的产物
+#endif
                 Emit(LifeCycle.exportDone);
             }
             else
@@ -1654,7 +1659,7 @@ namespace WeChatWASM
                     string g0 = File.ReadAllText(gameJsPath0, Encoding.UTF8);
                     if (!g0.Contains("wx-crypto-polyfill"))
                     {
-                        string polyfill = "if(typeof crypto==='undefined'||!crypto.getRandomValues){var __g=typeof window!=='undefined'?window:(typeof GameGlobal!=='undefined'?GameGlobal:globalThis);__g.crypto={getRandomValues:function(a){for(var i=0;i<a.length;i++){a[i]=(Math.random()*256)|0}return a}}};/*wx-crypto-polyfill*/";
+                        string polyfill = "(function(){try{var g=globalThis;var c=g.crypto;if(c&&!c.getRandomValues){c.getRandomValues=function(a){for(var i=0;i<a.length;i++){a[i]=(Math.random()*256)|0}return a}}else if(!c){g.crypto={getRandomValues:function(a){for(var i=0;i<a.length;i++){a[i]=(Math.random()*256)|0}return a}}}}catch(e){}})();/*wx-crypto-polyfill*/";
                         g0 = polyfill + g0;
                         File.WriteAllText(gameJsPath0, g0, Encoding.UTF8);
                         UnityEngine.Debug.Log("[Unity6] game.js: crypto.getRandomValues polyfill injected");
@@ -1668,7 +1673,7 @@ namespace WeChatWASM
                     string gameJs = File.ReadAllText(gameJsPath, Encoding.UTF8);
                     if (!gameJs.Contains("block-webgl-modal"))
                     {
-                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var s=((''+((o&&o.content)||''))+(''+((o&&o.title)||''))).toLowerCase();if(s.indexOf('webgl')>=0){var r={confirm:true,cancel:false};try{if(o&&typeof o.success==='function'){o.success(r)}if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return Promise.resolve(r)}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
+                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var t=(''+((o&&o.title)||''));var s=((''+((o&&o.content)||''))+t).toLowerCase();var isMisreport=t==='\\u63d0\\u793a'&&s.indexOf('webgl')>=0&&s.indexOf('\\u4e0d\\u652f\\u6301')>=0;var gl2ok=false;try{gl2ok=!!(globalThis.canvas&&globalThis.canvas.getContext&&globalThis.canvas.getContext('webgl2'))||!!(globalThis.__wxMainCanvasLocked)}catch(e){}if(isMisreport&&gl2ok){var r={confirm:true,cancel:false};var p=Promise.resolve(r);try{if(o&&typeof o.success==='function'){o.success(r)}}catch(e){}try{if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return p}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
                         gameJs = block + gameJs;
                         File.WriteAllText(gameJsPath, gameJs, Encoding.UTF8);
                         UnityEngine.Debug.Log("[Unity6] game.js: webgl misdiagnosis modal blocked");
@@ -1677,7 +1682,9 @@ namespace WeChatWASM
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[Unity6] ProcessUnity6DirectConnect failed: {ex.Message}");
+                // [N04] fail-fast：直连补丁失败必须让导出失败，不允许静默跳过产出残缺产物
+                UnityEngine.Debug.LogError($"[Unity6] ProcessUnity6DirectConnect failed: {ex.Message}");
+                throw;
             }
 #endif
         }
