@@ -1637,9 +1637,10 @@ namespace WeChatWASM
                 string adapter = File.ReadAllText(adapterPath, Encoding.UTF8);
                     string anchor = "const canvas = wx.createCanvas();";
                     string lockCode = anchor + "if(globalThis.__wxMainCanvasLocked===undefined){try{globalThis.__wxMainCanvasLocked=!!canvas.getContext('webgl2')}catch(e){globalThis.__wxMainCanvasLocked=false}};";
-                    if (!adapter.Contains(anchor))
+                    int anchorCount = CountOccurrences(adapter, anchor);
+                    if (anchorCount != 1)
                     {
-                        throw new Exception("[Unity6] weapp-adapter.js anchor 'const canvas = wx.createCanvas();' not found - template changed?");
+                        throw new Exception($"[Unity6] weapp-adapter.js anchor 'const canvas = wx.createCanvas();' expected exactly 1, got {anchorCount} - template changed?");
                     }
                     if (!adapter.Contains("__wxMainCanvasLocked"))
                     {
@@ -1664,6 +1665,7 @@ namespace WeChatWASM
                     new System.Collections.Generic.KeyValuePair<string, string>("[WX-alert-stub]", "alert stub"),
                     new System.Collections.Generic.KeyValuePair<string, string>("Module[\"asm\"]=wasmExports;", "dynCall/asm 导出"),
                     new System.Collections.Generic.KeyValuePair<string, string>("Module['FS']=FS;", "FS 挂载"),
+                    new System.Collections.Generic.KeyValuePair<string, string>("Module['GL'] = (typeof GL !== 'undefined') ? GL : undefined;", "GL 安全求值"),
                 };
                 foreach (var kv in requiredMarkers)
                 {
@@ -1673,7 +1675,7 @@ namespace WeChatWASM
                         throw new Exception($"[Unity6] framework patch marker '{kv.Value}' ({kv.Key.Substring(0, System.Math.Min(30, kv.Key.Length))}...) expected exactly 1, got {count} - build output form changed?");
                     }
                 }
-                UnityEngine.Debug.Log("[Unity6] framework patch markers verified (5/5)");
+                UnityEngine.Debug.Log("[Unity6] framework patch markers verified (6/6)");
 
                 // b0) game.js：注入 crypto.getRandomValues polyfill。
                 // Unity 6 (Emscripten 4.0) 的链接管线不会把 SDK 的 crypto.jspre 拼入产物，
@@ -1705,7 +1707,7 @@ namespace WeChatWASM
                     string gameJs = File.ReadAllText(gameJsPath, Encoding.UTF8);
                     if (!gameJs.Contains("block-webgl-modal"))
                     {
-                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var t=(''+((o&&o.title)||''));var s=((''+((o&&o.content)||''))+t).toLowerCase();var isMisreport=t==='\\u63d0\\u793a'&&s.indexOf('webgl')>=0&&s.indexOf('\\u4e0d\\u652f\\u6301')>=0;if(isMisreport){var gl2ok=false;try{gl2ok=globalThis.__wxMainCanvasLocked===true||(!!globalThis.canvas&&!!globalThis.canvas.getContext&&!!globalThis.canvas.getContext('webgl2'))}catch(e){}if(gl2ok){var r={confirm:true,cancel:false};var p=Promise.resolve(r);try{if(o&&typeof o.success==='function'){o.success(r)}}catch(e){}try{if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return p}}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
+                        string block = "(function(){try{if(wx.__wxBlockArmed){return}wx.__wxBlockArmed=1;var osm=wx.showModal&&wx.showModal.bind(wx);if(osm){wx.showModal=function(o){var t=(''+((o&&o.title)||''));var s=((''+((o&&o.content)||''))+t).toLowerCase();var isMisreport=s.indexOf('不支持webgl')>=0&&s.indexOf('请升级微信')>=0;if(isMisreport){var gl2ok=false;try{gl2ok=globalThis.__wxMainCanvasLocked===true||(!!globalThis.canvas&&!!globalThis.canvas.getContext&&!!globalThis.canvas.getContext('webgl2'))}catch(e){}if(gl2ok){var r={confirm:true,cancel:false};var p=Promise.resolve(r);try{if(o&&typeof o.success==='function'){o.success(r)}}catch(e){}try{if(o&&typeof o.complete==='function'){o.complete(r)}}catch(e){}return p}}return osm(o)}}}catch(e){}})();/*block-webgl-modal*/";
                         gameJs = block + gameJs;
                         File.WriteAllText(gameJsPath, gameJs, Encoding.UTF8);
                         UnityEngine.Debug.Log("[Unity6] game.js: webgl misdiagnosis modal blocked");
