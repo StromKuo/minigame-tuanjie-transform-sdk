@@ -41,10 +41,13 @@ if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
 
 ## 已知边界
 
-- **✅ 全链路已打通（2026-10-31 实测）**：引擎启动（callMain 130ms）、3D 渲染、IMGUI、触摸输入桥接、音频初始化在微信开发者工具中全部正常（60fps）。关键修复见提交历史：强制 WebGL2 + 跳过 3.1 时代 emscriptenArgs（GL 库裁剪真凶）、代码剥离双禁用（构建侧设置）、一组运行时转换 stub。
-- **使用注意**：
-  - 首次使用请重置工程的 Graphics API（Auto）与 emscriptenArgs（清空）——历史 SDK 版本写入的旧值会毒害构建；
-  - 构建侧需设置 `ManagedStrippingLevel=Disabled` + `stripEngineCode=false`（Unity 6.6 默认剥离会裁掉引擎启动必需代码）；
-  - 每次导出后向产物 `game.js` 顶部注入 crypto polyfill（见上文）。
-- 仍不可用：EmscriptenGLX 加速、性能分析插件（静态库 ABI 冲突）；TextureMin 压缩纹理适配待为 4.0 重写；真机验证待做。
-- 微信官方发布 Unity 6.5+ 适配后，可 rebase 回官方分支并删除本分支补丁。
+- **✅ 全链路已验证（2026-11-02，iOS + Android 真机全绿）**：引擎启动、WebGL2 直连渲染、触摸交互、OnGUI、VibrateShort、crypto polyfill（iOS JSC 实证生效）、无弹窗。
+- **质量档案**：`UNITY6_REVIEW.md` ~ `UNITY6_REVIEW_V5.md`（7 轮独立审查，29 项发现全部修复关闭）
+- **使用步骤**（全自动，无需手动改产物）：
+  1. 导出前重置工程 Graphics API 为 Auto、清空 emscriptenArgs（历史 SDK 版本写入的旧值会毒害构建）
+  2. 构建设置 `ManagedStrippingLevel=Disabled` + `stripEngineCode=false`
+  3. 转换面板取消勾选 `EmscriptenGLX`
+  4. 直接导出——SDK 自动完成全部补丁（含 crypto polyfill、弹窗拦截、canvas 抢锁），并有 6 项契约断言验证产物完整性
+- **版本要求**：Unity 6000.6.7f1（已验证）；微信开发者工具 2.02+；基础库 3.17.5
+- **仍不可用**：EmscriptenGLX 加速、性能分析插件、TextureMin 压缩纹理适配（待为 4.0 重写）；Profiler、自定义 linker 参数
+- 微信官方发布 Unity 6.5+ 适配后，可 rebase 回官方分支并删除本分支补丁
