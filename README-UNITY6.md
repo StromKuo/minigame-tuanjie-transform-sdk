@@ -51,3 +51,12 @@ if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
 - **版本要求**：Unity 6000.6.7f1（已验证）；微信开发者工具 2.02+；基础库 3.17.5
 - **仍不可用**：EmscriptenGLX 加速、性能分析插件、TextureMin 压缩纹理适配（待为 4.0 重写）；Profiler、自定义 linker 参数
 - 微信官方发布 Unity 6.5+ 适配后，可 rebase 回官方分支并删除本分支补丁
+
+
+### 2026-11-09 Unity 6 音频桥修复
+
+CubeAway Unity 6000.6.8f1 验收发现：`_JS_Sound_Init` 生成为 `var ... = function(){...}`，原转换器只扫描具名 `function `，导致初始化留在 Unity 原实现，而加载已转发微信 SDK。接通初始化后又确认 SDK 读取 `Module.HEAPU8` 时为空；Emscripten 4 默认只导出部分 heap views。
+
+`Unity6AudioBridgePatcher` 在既有转换之后将该初始化表达式连接到 SDK，并在 `updateMemoryViews` 内同步导出八种 heap views，使内存增长后引用随之更新，不改 Android 原生运行时或音频资源导入设置。未知内存更新函数形态明确失败，避免静默生成缺少桥接的产物。
+
+已验证：完整 WxEditor 源码使用 Unity 6000.6.8f1 实际引用编译通过；真实 framework 转换和 AST 解析通过，重复转换保持一致，八种视图首次初始化及内存增长后更新测试通过。`Tests/Editor` 含五项回归测试。诊断产物经用户确认有音效、画面正常；完整源码正式提交接入后的重新导出、真机与跨机型听感仍未验收，不将临时修改导出文件视为正式接入。

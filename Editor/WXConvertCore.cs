@@ -1016,6 +1016,9 @@ namespace WeChatWASM
                 "_JS_MobileKeybard_"
             };
             text = ReplaceOrRemoveFunctionsWithPrefix(text, removePrefixes, replacePrefixes);
+#if UNITY_6000_0_OR_NEWER
+            text = Unity6AudioBridgePatcher.Patch(text);
+#endif
             int i;
             for (i = 0; i < ReplaceRules.rules.Length; i++)
             {

@@ -1,0 +1,17 @@
+{
+    "name": "WxEditor.AudioBridge.Tests",
+    "references": [
+        "WxEditor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ],
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS",
+        "UNITY_6000_0_OR_NEWER"
+    ],
+    "autoReferenced": false
+}
