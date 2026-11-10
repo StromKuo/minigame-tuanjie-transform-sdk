@@ -153,4 +153,34 @@ export default {
     WXStorageHasKeySync(key) {
         return storage.getData(key, '') !== '';
     },
+    // ---- 确认型存储（直连微信原生 wx.*StorageSync，不经本文件上方的缓存与异步队列）----
+    // 供 C# 侧 WX.CallJSFunctionWithReturn('WXWASMSDK', '<方法名>', ...) 同步调用：
+    // 返回 { ok: true, data? } 或 { ok: false, err }，JS 异常不再穿透 P/Invoke 导致 abort。
+    // wx.getStorageSync 对不存在的 key 返回 ''（不抛错），与读取错误经由 ok/err 区分。
+    StorageSetConfirmed(key, value) {
+        try {
+            wx.setStorageSync(key || 'defaultKey', value);
+            return { ok: true };
+        }
+        catch (e) {
+            return { ok: false, err: (e && e.errMsg) || String(e) };
+        }
+    },
+    StorageGetConfirmed(key) {
+        try {
+            return { ok: true, data: wx.getStorageSync(key || 'defaultKey') };
+        }
+        catch (e) {
+            return { ok: false, err: (e && e.errMsg) || String(e) };
+        }
+    },
+    StorageRemoveConfirmed(key) {
+        try {
+            wx.removeStorageSync(key || 'defaultKey');
+            return { ok: true };
+        }
+        catch (e) {
+            return { ok: false, err: (e && e.errMsg) || String(e) };
+        }
+    },
 };
